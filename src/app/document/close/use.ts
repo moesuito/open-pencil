@@ -1,8 +1,10 @@
-import { useEventListener } from '@vueuse/core'
+import { invoke } from '@tauri-apps/api/core'
+import { useEventListener, watchImmediate } from '@vueuse/core'
 import { onMounted, onScopeDispose } from 'vue'
 
 import { confirmAppExit, isExitApproved } from '@/app/document/close/exit'
 import { notificationMessages } from '@/app/i18n/notifications'
+import { appPreferences } from '@/app/settings/preferences/store'
 import { toast } from '@/app/shell/ui'
 import { allTabs } from '@/app/tabs'
 import { IS_TAURI } from '@/constants'
@@ -40,6 +42,18 @@ export function useDocumentCloseProtection() {
     else cleanup.push(unsubscribe)
   }
 
+  // The native window handlers read these preferences; keep them in step with the store.
+  if (IS_TAURI) {
+    watchImmediate(
+      () => [appPreferences.value.window.closeToTray, appPreferences.value.window.minimizeToTray],
+      ([closeToTray, minimizeToTray]) => {
+        void invoke('set_tray_preferences', { closeToTray, minimizeToTray }).catch(
+          () => undefined
+        )
+      }
+    )
+  }
+
   onMounted(async () => {
     if (!IS_TAURI) return
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
@@ -50,6 +64,12 @@ export function useDocumentCloseProtection() {
         // Always intercept: Tauri destroys the window implicitly when a handler returns
         // without preventing, which would bypass the prompt after approval.
         event.preventDefault()
+        if (appPreferences.value.window.closeToTray) {
+          // Closing hides to the tray: the app and its local MCP server keep running, and
+          // unsaved documents stay in memory untouched.
+          void window.hide()
+          return
+        }
         if (isExitApproved()) return
         void requestClose(() => window.destroy())
       })

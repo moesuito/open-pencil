@@ -68,6 +68,14 @@ export interface SharingPreferences {
 export const AI_SETUP_STATES = ['pending', 'done'] as const
 export type AISetupState = (typeof AI_SETUP_STATES)[number]
 
+/** What the window buttons do while the app keeps running in the tray. */
+export interface WindowPreferences {
+  /** The close button hides to the tray instead of quitting, so the MCP server stays reachable. */
+  closeToTray: boolean
+  /** Minimizing hides to the tray instead of leaving a taskbar button. */
+  minimizeToTray: boolean
+}
+
 export interface AppPreferences {
   appearance: { animations: AnimationPreference; accent: AccentPreference }
   chat: {
@@ -90,6 +98,7 @@ export interface AppPreferences {
   designCheck: DesignCheckPreferences
   comments: CommentPreferences
   toolbar: ToolbarLayout
+  window: WindowPreferences
   onboarding: {
     aiSetup: AISetupState
   }
@@ -119,6 +128,7 @@ export const DEFAULT_APP_PREFERENCES: Readonly<AppPreferences> = {
     sort: 'newest'
   },
   toolbar: structuredClone(DEFAULT_TOOLBAR_LAYOUT),
+  window: { closeToTray: true, minimizeToTray: true },
   onboarding: { aiSetup: 'pending' },
   sharing: { dailyPing: true, usageStats: 'unset' }
 }
@@ -196,6 +206,10 @@ const appPreferencesSchema = section({
   ),
   onboarding: section({
     aiSetup: v.fallback(v.picklist(AI_SETUP_STATES), defaults.onboarding.aiSetup)
+  }),
+  window: section({
+    closeToTray: v.fallback(v.boolean(), defaults.window.closeToTray),
+    minimizeToTray: v.fallback(v.boolean(), defaults.window.minimizeToTray)
   }),
   sharing: section({
     dailyPing: v.fallback(v.boolean(), defaults.sharing.dailyPing),
@@ -281,4 +295,11 @@ export function updateCommentPreferences(changes: Partial<CommentPreferences>): 
 
 export function updateToolbarLayout(toolbar: ToolbarLayout): void {
   appPreferences.value = { ...appPreferences.value, toolbar }
+}
+
+export function updateWindowPreferences(changes: Partial<WindowPreferences>): void {
+  appPreferences.value = {
+    ...appPreferences.value,
+    window: { ...appPreferences.value.window, ...changes }
+  }
 }

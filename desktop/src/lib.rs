@@ -1,4 +1,5 @@
 mod agents;
+mod autostart;
 mod credentials;
 mod deep_link;
 mod fig_container;
@@ -6,7 +7,7 @@ mod fonts;
 mod http;
 mod menu;
 mod menu_events;
-#[cfg(target_os = "macos")]
+mod tray;
 mod window;
 
 use credentials::{
@@ -25,7 +26,6 @@ use std::{
 };
 use tauri::{Emitter, Manager};
 use tauri_plugin_fs::FsExt;
-#[cfg(target_os = "macos")]
 use window::show_main_window;
 
 #[derive(Clone, serde::Serialize)]
@@ -44,6 +44,49 @@ struct PendingOpen(Mutex<Vec<PendingOpenFile>>);
 
 /// Rooms from `openpencil://join` links, waiting for the frontend to open them.
 struct PendingRooms(Mutex<Vec<String>>);
+
+/// What the window buttons do while the app keeps running in the tray. The settings UI
+/// keeps this in step with its stored preferences through `set_tray_preferences`.
+struct TrayPreferences {
+    close_to_tray: bool,
+    minimize_to_tray: bool,
+}
+
+impl Default for TrayPreferences {
+    fn default() -> Self {
+        Self {
+            close_to_tray: true,
+            minimize_to_tray: true,
+        }
+    }
+}
+
+#[tauri::command]
+fn autostart_supported() -> bool {
+    cfg!(windows)
+}
+
+#[tauri::command]
+fn autostart_enabled() -> bool {
+    autostart::is_enabled()
+}
+
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<(), String> {
+    autostart::set_enabled(enabled).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_tray_preferences(
+    preferences: tauri::State<'_, Mutex<TrayPreferences>>,
+    close_to_tray: bool,
+    minimize_to_tray: bool,
+) {
+    if let Ok(mut current) = preferences.lock() {
+        current.close_to_tray = close_to_tray;
+        current.minimize_to_tray = minimize_to_tray;
+    }
+}
 
 #[tauri::command]
 fn take_pending_rooms(state: tauri::State<PendingRooms>) -> Vec<String> {
@@ -352,6 +395,8 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             queue_deep_links(app, deep_links_from_args(&args));
             queue_open_paths(app, open_paths_from_args(args, Path::new(&cwd)));
+            // A second launch while the first one sits in the tray brings its window back.
+            show_main_window(app);
         }));
     }
 
@@ -361,8 +406,11 @@ pub fn run() {
         .manage(PendingOpen(Mutex::new(Vec::new())))
         .manage(ProxyHttpRequests::default())
         .manage(PendingRooms(Mutex::new(Vec::new())))
+        .manage(Mutex::new(TrayPreferences::default()))
         .invoke_handler(tauri::generate_handler![
             agents::agent_lookup,
+            autostart_enabled,
+            autostart_supported,
             build_fig_file,
             credential_read,
             credential_access_paused,
@@ -377,7 +425,9 @@ pub fn run() {
             load_system_font,
             proxy_http_request,
             cancel_http_request,
+            set_autostart,
             set_recent_files,
+            set_tray_preferences,
             native_menu_checked,
             set_native_menu_checked,
             take_pending_open,
@@ -433,7 +483,62 @@ pub fn run() {
                 queue_deep_links(app.handle(), urls);
             }
 
-            Ok(install_app_menu(app.handle(), &[])?)
+            install_app_menu(app.handle(), &[])?;
+            tray::install(app.handle())?;
+
+            // The window starts hidden (`visible: false`) so `--hidden` can come up straight in
+            // the tray without a flash; a normal launch shows it once the tray icon exists.
+            if let Some(window) = app.get_webview_window("main") {
+                let tray_window = window.clone();
+                let tray_handle = app.handle().clone();
+                window.on_window_event(move |event| match event {
+                    // Closing keeps the app alive: its local MCP server is the backend agents use.
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        let close_to_tray = tray_handle
+                            .state::<Mutex<TrayPreferences>>()
+                            .lock()
+                            .map(|preferences| preferences.close_to_tray)
+                            .unwrap_or(true);
+                        if close_to_tray {
+                            api.prevent_close();
+                            let _ = tray_window.hide();
+                        }
+                    }
+                    _ => {}
+                });
+            }
+
+            // Windows emits no window event for the minimize button, so the state is watched
+            // instead: one cheap call every half second for the life of the app.
+            let poll_handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let minimize_to_tray = poll_handle
+                    .state::<Mutex<TrayPreferences>>()
+                    .lock()
+                    .map(|preferences| preferences.minimize_to_tray)
+                    .unwrap_or(true);
+                if !minimize_to_tray {
+                    continue;
+                }
+                let Some(window) = poll_handle.get_webview_window("main") else {
+                    break;
+                };
+                if window.is_visible().unwrap_or(false) && window.is_minimized().unwrap_or(false) {
+                    let _ = window.unminimize();
+                    let _ = window.hide();
+                }
+            });
+
+            if std::env::args().any(|arg| arg == "--hidden") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            } else {
+                show_main_window(app.handle());
+            }
+
+            Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

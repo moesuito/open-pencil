@@ -1,5 +1,8 @@
 import { FigmaAPI } from '@open-pencil/core/figma-api'
-import { createCanvasKitRasterCodec } from '@open-pencil/core/io/formats/raster'
+import {
+  createCanvasKitRasterCodec,
+  headlessRenderNodes
+} from '@open-pencil/core/io/formats/raster'
 
 import type { EditorStore } from '@/app/editor/active-store'
 import { listFamilies, listFonts, loadFont } from '@/app/editor/fonts'
@@ -27,8 +30,21 @@ export function makeFigmaFromStore(
     },
     zoom: store.state.zoom
   }
-  api.exportImage = (nodeIds, opts) =>
-    store.renderExportImage(nodeIds, opts.scale ?? 1, opts.format ?? 'PNG', opts.pageId ?? pageId)
+  api.exportImage = async (nodeIds, opts) => {
+    const data = await store.renderExportImage(
+      nodeIds,
+      opts.scale ?? 1,
+      opts.format ?? 'PNG',
+      opts.pageId ?? pageId
+    )
+    if (data) return data
+    // The editor canvas is not mounted (the Home screen, or a window started hidden in the
+    // tray), so the store has no renderer; render through CanvasKit so agents can still export.
+    return headlessRenderNodes(store.graph, opts.pageId ?? pageId, nodeIds, {
+      scale: opts.scale ?? 1,
+      format: opts.format ?? 'PNG'
+    })
+  }
   if (store.renderer) api.rasterCodec = createCanvasKitRasterCodec(store.renderer.ck)
   api.loadFontAsync = async ({ family, style }) => {
     await loadFont(family, style).catch(() => null)

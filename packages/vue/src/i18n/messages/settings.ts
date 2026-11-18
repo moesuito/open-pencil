@@ -74,7 +74,16 @@ export const settingsMessageDefaults = {
   discard: 'Discard',
   storage: 'Cloud storage',
   mobilePanelNavigation: 'Mobile panel navigation',
-  notifications: 'Notifications'
+  notifications: 'Notifications',
+  desktop: 'Desktop',
+  desktopDescription:
+    'Keep OpenPencil running in the system tray, with its local MCP server available to agents.',
+  startWithWindows: 'Start with Windows',
+  startWithWindowsDescription: 'Launch hidden in the tray when you sign in to Windows.',
+  closeToTray: 'Close to tray',
+  closeToTrayDescription: 'Closing the window keeps the app and its local MCP server running.',
+  minimizeToTray: 'Minimize to tray',
+  minimizeToTrayDescription: 'Minimizing hides the window instead of leaving a taskbar button.'
 } as const
 
 export const settingsMessages = i18n('settings', settingsMessageDefaults)

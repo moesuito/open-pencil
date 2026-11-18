@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { computed, onMounted, ref } from 'vue'
 
 import { type Locale, useI18n } from '@open-pencil/vue'
 
 import { recoveryEnabled, setRecoveryEnabled } from '@/app/document/recovery/preferences'
 import { setSnappingPreference } from '@/app/settings/preferences/apply'
-import { appPreferences } from '@/app/settings/preferences/store'
+import {
+  appPreferences,
+  updateWindowPreferences
+} from '@/app/settings/preferences/store'
 import { animationPreference } from '@/app/shell/motion'
 import { useAppTheme } from '@/app/shell/theme'
+import { isTauri } from '@/app/tauri/env'
 import CredentialSettingsSection from '@/components/settings/credentials/CredentialSettingsSection.vue'
 import AccentColorPicker from '@/components/settings/general/AccentColorPicker.vue'
 import CollaborationNameSection from '@/components/settings/general/CollaborationNameSection.vue'
@@ -50,6 +55,39 @@ const snapToObjects = computed({
 const snapToPixelGrid = computed({
   get: () => appPreferences.value.editing.snapping.pixelGrid,
   set: (enabled: boolean) => setSnappingPreference('pixelGrid', enabled)
+})
+
+const desktopAvailable = ref(false)
+const autostartAvailable = ref(false)
+const autostartEnabled = ref(false)
+
+onMounted(async () => {
+  if (!isTauri()) return
+  desktopAvailable.value = true
+  autostartAvailable.value = await invoke<boolean>('autostart_supported').catch(() => false)
+  if (autostartAvailable.value) {
+    autostartEnabled.value = await invoke<boolean>('autostart_enabled').catch(() => false)
+  }
+})
+
+const startWithWindows = computed({
+  get: () => autostartEnabled.value,
+  set: (enabled: boolean) => {
+    autostartEnabled.value = enabled
+    void invoke('set_autostart', { enabled }).catch(() => {
+      autostartEnabled.value = !enabled
+    })
+  }
+})
+
+const closeToTray = computed({
+  get: () => appPreferences.value.window.closeToTray,
+  set: (enabled: boolean) => updateWindowPreferences({ closeToTray: enabled })
+})
+
+const minimizeToTray = computed({
+  get: () => appPreferences.value.window.minimizeToTray,
+  set: (enabled: boolean) => updateWindowPreferences({ minimizeToTray: enabled })
 })
 </script>
 
@@ -124,6 +162,54 @@ const snapToPixelGrid = computed({
             v-model="preserveUnsavedWork"
             :label="recovery.preserveUnsavedWork"
             data-test-id="settings-recovery-enabled"
+          />
+        </label>
+      </SettingsGroup>
+    </SettingsSection>
+
+    <SettingsSection v-if="desktopAvailable">
+      <template #title>{{ settings.desktop }}</template>
+      <template #description>{{ settings.desktopDescription }}</template>
+
+      <SettingsGroup>
+        <label
+          v-if="autostartAvailable"
+          class="flex items-center justify-between gap-4 px-3 py-2.5"
+        >
+          <span>
+            <span class="block text-xs text-surface">{{ settings.startWithWindows }}</span>
+            <span class="block text-[10px] text-muted">{{
+              settings.startWithWindowsDescription
+            }}</span>
+          </span>
+          <AppSwitch
+            v-model="startWithWindows"
+            :label="settings.startWithWindows"
+            data-test-id="settings-start-with-windows"
+          />
+        </label>
+        <label class="flex items-center justify-between gap-4 px-3 py-2.5">
+          <span>
+            <span class="block text-xs text-surface">{{ settings.closeToTray }}</span>
+            <span class="block text-[10px] text-muted">{{ settings.closeToTrayDescription }}</span>
+          </span>
+          <AppSwitch
+            v-model="closeToTray"
+            :label="settings.closeToTray"
+            data-test-id="settings-close-to-tray"
+          />
+        </label>
+        <label class="flex items-center justify-between gap-4 px-3 py-2.5">
+          <span>
+            <span class="block text-xs text-surface">{{ settings.minimizeToTray }}</span>
+            <span class="block text-[10px] text-muted">{{
+              settings.minimizeToTrayDescription
+            }}</span>
+          </span>
+          <AppSwitch
+            v-model="minimizeToTray"
+            :label="settings.minimizeToTray"
+            data-test-id="settings-minimize-to-tray"
           />
         </label>
       </SettingsGroup>

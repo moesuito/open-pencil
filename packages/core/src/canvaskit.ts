@@ -15,7 +15,9 @@ export async function getCanvasKit(options?: CanvasKitOptions): Promise<CanvasKi
   const defaultLocate = (file: string) => {
     if (!IS_BROWSER) {
       const ckPath = import.meta.resolve('canvaskit-wasm')
-      return decodeURIComponent(new URL(file, ckPath).pathname)
+      // A file URL's pathname keeps a leading slash before the Windows drive letter.
+      const path = decodeURIComponent(new URL(file, ckPath).pathname)
+      return /^\/[A-Za-z]:/.test(path) ? path.slice(1) : path
     }
     const base = 'env' in import.meta ? import.meta.env.BASE_URL : '/'
     const prefix = base === '/' ? '' : base.replace(/\/$/, '')
